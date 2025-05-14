@@ -1,69 +1,103 @@
 # Connect to Azure (if not already connected)
+# Authenticate with Managed Identity
+Disable-AzContextAutosave -Scope Process
+Connect-AzAccount -Identity
 
 # Parameters
-$tagName = "autostart"    # Specify your tag name
-$tagValue = "enabled"     # Specify your tag value
+$tagName = "patch"    # Specify your tag name
+$tagValue = "patch-001"     # Specify your tag value
+$maxConcurrentJobs = 10    # Maximum number of concurrent jobs
 
-# Function to process VMs
+# Function to process VMs in a subscription
 function Process-VMs {
-    param (
-        [string]$SubscriptionId,
-        [string]$SubscriptionName
-    )
+param (
+    [string]$SubscriptionId,
+    [string]$SubscriptionName
+)
+
+Write-Host "`nProcessing Subscription: $SubscriptionName ($SubscriptionId)" -ForegroundColor Yellow
+
+# Get all VMs with the specified tag
+$vms = Get-AzVM | Where-Object {$_.Tags.Keys -contains $tagName -and $_.Tags[$tagName] -eq $tagValue}
+
+if ($vms.Count -eq 0) {
+    Write-Host "No VMs found with tag $tagName = $tagValue in subscription $SubscriptionName" -ForegroundColor Yellow
+    return
+}
+
+$jobs = @()
+
+foreach ($vm in $vms) {
+    # Wait if we've reached the maximum number of concurrent jobs
+    while ((Get-Job -State Running).Count -ge $maxConcurrentJobs) {
+        Start-Sleep -Seconds 1
+        $completedJobs = Get-Job -State Completed
+        foreach ($job in $completedJobs) {
+            Receive-Job -Job $job
+            Remove-Job -Job $job
+        }
+    }
     
-    Write-Host "`nProcessing Subscription: $SubscriptionName ($SubscriptionId)" -ForegroundColor Yellow
-    
-    # Get all VMs with the specified tag
-    $vms = Get-AzVM | Where-Object {$_.Tags.Keys -contains $tagName -and $_.Tags[$tagName] -eq $tagValue}
-    
-    foreach ($vm in $vms) {
-        Write-Host "`nProcessing VM: $($vm.Name)" -ForegroundColor Cyan
-        
+    # Start a new job for this VM
+    $jobs += Start-Job -ScriptBlock {
+        param($VM, $SubscriptionId)
+        Import-Module Az.Accounts
+        Import-Module Az.Compute
+        Disable-AzContextAutosave -Scope Process
+        Connect-AzAccount -Identity
+        # Set subscription context
+        Set-AzContext -SubscriptionId $SubscriptionId | Out-Null
+
         # Get the current status of the VM
-        $status = (Get-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name -Status).Statuses | 
+        $status = (Get-AzVM -ResourceGroupName $VM.ResourceGroupName -Name $VM.Name -Status).Statuses | 
                   Where-Object { $_.Code -match "PowerState" }
-        
         $powerState = $status.DisplayStatus
-        Write-Host "Current Power State: $powerState"
-        
+        Write-Output "VM: $($VM.Name) - Current Power State: $powerState"
+
         try {
-            # If VM is running, stop it. If stopped, start it.
             if ($powerState -eq "VM running") {
-                Write-Host "Stopping VM: $($vm.Name)" -ForegroundColor Yellow
-                Stop-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name -Force
-                Write-Host "VM stopped successfully" -ForegroundColor Green
+                Write-Output "Stopping VM: $($VM.Name)"
+                Stop-AzVM -ResourceGroupName $VM.ResourceGroupName -Name $VM.Name -Force
+                Write-Output "VM $($VM.Name) stopped successfully"
             }
             elseif ($powerState -eq "VM deallocated") {
-                Write-Host "Starting VM: $($vm.Name)" -ForegroundColor Yellow
-                Start-AzVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name
-                Write-Host "VM started successfully" -ForegroundColor Green
+                Write-Output "Starting VM: $($VM.Name)"
+                Start-AzVM -ResourceGroupName $VM.ResourceGroupName -Name $VM.Name
+                Write-Output "VM $($VM.Name) started successfully"
             }
             else {
-                Write-Host "VM is in transition state ($powerState). Skipping..." -ForegroundColor Red
+                Write-Output "VM $($VM.Name) is in transition state ($powerState). Skipping..."
             }
         }
         catch {
-            Write-Host "Error processing VM $($vm.Name): $_" -ForegroundColor Red
+            Write-Output "Error processing VM $($VM.Name): $_"
         }
-    }
+    } -ArgumentList $vm, $SubscriptionId
+}
+
+# Wait for remaining jobs to complete and process their output
+Write-Host "Waiting for remaining jobs to complete..." -ForegroundColor Yellow
+Wait-Job -Job $jobs | Out-Null
+
+foreach ($job in $jobs) {
+    Receive-Job -Job $job
+    Remove-Job -Job $job
+}
 }
 
 # Main script
 try {
-    # Get all subscriptions
-    $subscriptions = Get-AzSubscription
-    
-    foreach ($sub in $subscriptions) {
-        # Set context to the current subscription
-        Set-AzContext -SubscriptionId $sub.Id | Out-Null
-        
-        # Process VMs in the current subscription
-        Process-VMs -SubscriptionId $sub.Id -SubscriptionName $sub.Name
-    }
+$subscriptions = Get-AzSubscription
+
+foreach ($sub in $subscriptions) {
+    Set-AzContext -SubscriptionId $sub.Id | Out-Null
+    Process-VMs -SubscriptionId $sub.Id -SubscriptionName $sub.Name
+}
 }
 catch {
-    Write-Host "Error: $_" -ForegroundColor Red
+Write-Host "Error: $_" -ForegroundColor Red
 }
 finally {
-    Write-Host "`nScript execution completed" -ForegroundColor Green
+Get-Job | Remove-Job -Force
+Write-Host "`nScript execution completed" -ForegroundColor Green
 }
