@@ -1,11 +1,26 @@
+
+param (
+    # [Parameter(Mandatory = $true)]
+    # [ValidateSet("Start", "Stop")]
+    # [string]$Action,
+
+    [Parameter(Mandatory = $true)]
+    [string]$TagName,
+
+    [Parameter(Mandatory = $true)]
+    [string]$TagValue
+)
+
+
+
 # Connect to Azure (if not already connected)
 # Authenticate with Managed Identity
 Disable-AzContextAutosave -Scope Process
 Connect-AzAccount -Identity
 
 # Parameters
-$tagName = "patch"    # Specify your tag name
-$tagValue = "patch-001"     # Specify your tag value
+# $tagName = "patch"    # Specify your tag name
+# $tagValue = "patch-001"     # Specify your tag value
 $maxConcurrentJobs = 10    # Maximum number of concurrent jobs
 
 # Function to process VMs in a subscription
