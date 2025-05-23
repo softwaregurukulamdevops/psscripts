@@ -67,7 +67,7 @@ resource "azurerm_policy_definition" "audit_and_modify_operational_schedule" {
       "effect": "modify",
       "details": {
         "roleDefinitionIds": [
-          "/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000000" # Contributor role
+          "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"# Contributor role
         ],
         "operations": [
           {
