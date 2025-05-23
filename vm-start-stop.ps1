@@ -44,6 +44,7 @@ $jobs = @()
 
 foreach ($vm in $vms) {
     # Wait if we've reached the maximum number of concurrent jobs
+    
     while ((Get-Job -State Running).Count -ge $maxConcurrentJobs) {
         Start-Sleep -Seconds 1
         $completedJobs = Get-Job -State Completed
@@ -64,18 +65,18 @@ foreach ($vm in $vms) {
         Set-AzContext -SubscriptionId $SubscriptionId | Out-Null
 
         # Get the current status of the VM
-        $status = (Get-AzVM -ResourceGroupName $VM.ResourceGroupName -Name $VM.Name -Status).Statuses | 
-                  Where-Object { $_.Code -match "PowerState" }
-        $powerState = $status.DisplayStatus
-        Write-Output "VM: $($VM.Name) - Current Power State: $powerState"
+        # $status = (Get-AzVM -ResourceGroupName $VM.ResourceGroupName -Name $VM.Name -Status).Statuses | 
+        #           Where-Object { $_.Code -match "PowerState" }
+        # $powerState = $status.DisplayStatus
+        # Write-Output "VM: $($VM.Name) - Current Power State: $powerState"
 
         try {
-            if ($powerState -eq "VM running") {
+            if ($Action -eq "Stop") {
                 Write-Output "Stopping VM: $($VM.Name)"
                 Stop-AzVM -ResourceGroupName $VM.ResourceGroupName -Name $VM.Name -Force
                 Write-Output "VM $($VM.Name) stopped successfully"
             }
-            elseif ($powerState -eq "VM deallocated") {
+            elseif ($Action -eq "Start") {
                 Write-Output "Starting VM: $($VM.Name)"
                 Start-AzVM -ResourceGroupName $VM.ResourceGroupName -Name $VM.Name
                 Write-Output "VM $($VM.Name) started successfully"
