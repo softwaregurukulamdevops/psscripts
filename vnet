@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = ">= 3.0.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.0.0"
+    }
   }
 
   required_version = ">= 1.3.0"
@@ -14,71 +18,74 @@ provider "azurerm" {
   subscription_id = "3bc8f069-65c7-4d08-b8de-534c20e56c38"
 }
 
-# Create the custom policy at the subscription scope
-resource "azurerm_policy_definition" "traffic_analytics_enabled" {
-  name         = "network-watcher-flow-logs-traffic-analytics-enabled"
-  policy_type  = "Custom"
-  mode         = "Indexed"
-  display_name = "Network Watcher flow logs should have traffic analytics enabled"
-  description  = "Traffic analytics analyzes flow logs to provide insights into traffic flow in your Azure cloud. It can be used to visualize network activity across your Azure subscriptions and identify hot spots, identify security threats, understand traffic flow patterns, pinpoint network misconfigurations and more."
-  management_group_id = "/providers/Microsoft.Management/managementGroups/managementtesing"
+provider "random" {}
 
-  # Scope: subscription-level
-  # Subscription_id = "3bc8f069-65c7-4d08-b8de-534c20e56c38" # ✅ Ensure the policy definition is created at the same scope
-
-  metadata = jsonencode({
-    version  = "1.0.1"
-    category = "Network"
-  })
-
-  parameters = jsonencode({
-    effect = {
-      type         = "String"
-      metadata     = {
-        displayName = "Effect"
-        description = "Enable or disable the execution of the policy"
-      }
-      allowedValues = ["Audit", "Disabled"]
-      defaultValue  = "Audit"
-    }
-  })
-
-  policy_rule = jsonencode({
-    if = {
-      allOf = [
-        {
-          field  = "type"
-          equals = "Microsoft.Network/networkWatchers/flowLogs"
-        },
-        {
-          anyOf = [
-            {
-              field  = "Microsoft.Network/networkWatchers/flowLogs/flowAnalyticsConfiguration.networkWatcherFlowAnalyticsConfiguration.enabled"
-              equals = false
-            },
-            {
-              field  = "Microsoft.Network/networkWatchers/flowLogs/flowAnalyticsConfiguration.networkWatcherFlowAnalyticsConfiguration.trafficAnalyticsInterval"
-              notIn  = ["10", "60"]
-            }
-          ]
-        }
-      ]
-    },
-    then = {
-      effect = "[parameters('effect')]"
-    }
-  })
+# Use full Azure resource ID format for management group ID here
+variable "management_group_id" {
+  type    = string
+  default = "/providers/Microsoft.Management/managementGroups/Managementgrouptest"
 }
 
-resource "azurerm_subscription_policy_assignment" "assign_traffic_analytics_policy" {
-  name                 = "enforce-traffic-analytics-policy"
-  display_name         = "Enforce Traffic Analytics on Flow Logs"
-  description          = "Assigns policy to audit if Network Watcher flow logs have traffic analytics enabled"
-  policy_definition_id = azurerm_policy_definition.traffic_analytics_enabled.id
-  subscription_id      = "/subscriptions/95d6c462-6712-41f0-974a-956027bf3fc8"
+# Create a Resource Group
+resource "azurerm_resource_group" "network_rg" {
+  name     = "rg-network-monitoring"
+  location = "eastus"
+}
+
+# Generate random suffix for globally unique names
+resource "random_string" "suffix" {
+  length  = 6
+  upper   = false
+  special = false
+}
+
+# Create a Storage Account
+resource "azurerm_storage_account" "flow_logs_storage" {
+  name                     = "flowlogsstorage${random_string.suffix.result}"
+  resource_group_name      = azurerm_resource_group.network_rg.name
+  location                 = azurerm_resource_group.network_rg.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  tags = {
+    environment = "networking"
+  }
+}
+
+# Create a Log Analytics Workspace
+resource "azurerm_log_analytics_workspace" "traffic_analytics" {
+  name                = "workspace-network-${random_string.suffix.result}"
+  location            = azurerm_resource_group.network_rg.location
+  resource_group_name = azurerm_resource_group.network_rg.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+}
+
+# Policy Assignment at Management Group Level
+resource "azurerm_management_group_policy_assignment" "vnet_flow_log_analytics" {
+  name                 = "vnet-flow-log"
+  display_name         = "Configure VNet to enable Flow Log and Traffic Analytics"
+  policy_definition_id = "/providers/Microsoft.Authorization/policyDefinitions/3e9965dc-cc13-47ca-8259-a4252fd0cf7b"
+  management_group_id  = var.management_group_id
+  description          = "Ensure virtual networks have flow logs and traffic analytics enabled."
+identity {
+    type = "SystemAssigned"
+  }
+  location = "eastus"
   parameters = jsonencode({
-    effect = {
-      value = "Audit"
+    "vnetRegion" = {
+      "value" = azurerm_resource_group.network_rg.location
+    },
+    "storageId" = {
+      "value" = azurerm_storage_account.flow_logs_storage.id
+    },
+    "workspaceResourceId" = {
+      "value" = azurerm_log_analytics_workspace.traffic_analytics.id
+    },
+    "workspaceRegion" = {
+      "value" = azurerm_resource_group.network_rg.location
+    },
+    "networkWatcherName" = {
+      "value" = "NetworkWatcher_${azurerm_resource_group.network_rg.location}"
     }
   })
 }
