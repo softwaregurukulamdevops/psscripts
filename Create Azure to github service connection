@@ -1,0 +1,139 @@
+# Variables - replace with your values
+$org = "Softwaregurukulam"
+$project = "SG-Website"
+$azureDevOpsPAT = "CRD3GB4QHptX2GNRbv658KP0GGB7q9UxNHTVx7Z1a0Ke1RQm9IPvJQQJ99BFACAAAAApUMN8AAASAZDOpVjp"
+$githubPAT = "github_pat"
+$serviceConnectionName = "GitHub_connection"
+
+# Base64-encode the Azure DevOps PAT
+$base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$azureDevOpsPAT"))
+
+# Get project ID (fix URL)
+$projectUrl = "https://dev.azure.com/$org/_apis/projects/"+$project+"?api-version=7.0"
+$projectResult = Invoke-RestMethod -Uri $projectUrl -Headers @{Authorization = "Basic $base64AuthInfo"} -Method Get
+$projectId = $projectResult.id
+
+# Check if service connection exists and exit if it does
+$listUrl = "https://dev.azure.com/$org/$project/_apis/serviceendpoint/endpoints?api-version=7.1-preview.4"
+$listResponse = Invoke-RestMethod -Uri $listUrl -Headers @{Authorization = "Basic $base64AuthInfo"} -Method Get
+$existing = $listResponse.value | Where-Object { $_.name -eq $serviceConnectionName }
+if ($existing) {
+    Write-Host "Service connection '$serviceConnectionName' already exists. Please delete it manually in the Azure DevOps portal if you want to recreate it. Exiting script."
+    exit 0
+}
+
+# Create the service connection body (move url to root)
+$body = @{
+    "name" = $serviceConnectionName
+    "type" = "github"
+    "url" = "https://github.com/"
+    "authorization" = @{
+        "scheme" = "PersonalAccessToken"
+        "parameters" = @{
+            "accessToken" = $githubPAT
+        }
+    }
+    "data" = @{
+        "accessToken" = $githubPAT
+    }
+    "serviceEndpointProjectReferences" = @(
+        @{
+            "projectReference" = @{
+                "id" = $projectId
+                "name" = $project
+            }
+            "name" = $serviceConnectionName
+            "description" = "GitHub connection"
+        }
+    )
+} | ConvertTo-Json -Depth 10
+
+# Create the service connection
+$endpointUrl = "https://dev.azure.com/$org/$project/_apis/serviceendpoint/endpoints?api-version=7.0-preview.4"
+$response = Invoke-RestMethod -Uri $endpointUrl -Headers @{Authorization = "Basic $base64AuthInfo"; "Content-Type" = "application/json"} -Method Post -Body $body
+
+# Check if service connection was created successfully
+if (-not $response -or -not $response.id) {
+    Write-Host "Failed to create service connection. Response:"
+    Write-Host ($response | ConvertTo-Json -Depth 10)
+    exit 1
+}
+$endpointId = $response.id
+
+# Grant access to all pipelines (organization-level endpoint, resource type 'serviceendpoint')
+$endpointId = $response.id
+$allPipelinesUrl = "https://dev.azure.com/$org/_apis/pipelines/pipelinePermissions/serviceendpoint/"+$endpointId+"?api-version=7.0-preview.1"
+$allPipelinesBody = @{
+    "resource" = @{
+        "id" = $endpointId
+        "type" = "serviceendpoint"
+    }
+    "allPipelines" = @{
+        "authorized" = $true
+        "authorizedBy" = "Pramod"
+    }
+    "pipelines" = @()
+} | ConvertTo-Json
+
+$headers = @{
+    Authorization = "Basic $base64AuthInfo"
+    "Content-Type" = "application/json"
+    "Accept" = "application/json; api-version=7.0-preview.1"
+}
+Invoke-RestMethod -Uri $allPipelinesUrl -Headers $headers -Method Patch -Body $allPipelinesBody
+
+# Check if pipeline permissions API is available for this org/service connection
+$checkApiUrl = "https://dev.azure.com/$org/_apis/pipelines/pipelinePermissions/serviceendpoint/$endpointId?api-version=7.0-preview.1"
+try {
+    $checkApiResponse = Invoke-RestMethod -Uri $checkApiUrl -Headers $headers -Method Get
+    Write-Host "Pipeline permissions API is available. Response:"
+    Write-Host ($checkApiResponse | ConvertTo-Json -Depth 10)
+} catch {
+    Write-Host "Pipeline permissions API is NOT available for this organization or service connection."
+    Write-Host $_.Exception.Message
+}
+
+# Authorize the service connection for all pipelines in the project
+
+# Get all pipelines in the project
+$pipelinesUrl = "https://dev.azure.com/$org/$project/_apis/pipelines?api-version=7.1-preview.1"
+$pipelinesResponse = Invoke-RestMethod -Uri $pipelinesUrl -Headers @{Authorization = "Basic $base64AuthInfo"} -Method Get
+$allPipelineIds = $pipelinesResponse.value | ForEach-Object { $_.id }
+
+if ($allPipelineIds -and $endpointId) {
+    $authorizePipelineUrl = "https://dev.azure.com/$org/$project/_apis/pipelines/pipelinePermissions/endpoint/$endpointId?api-version=5.1-preview.1"
+    $authorizePipelineBody = @{
+        "pipelines" = @()
+        "resource" = @{
+            "id" = $endpointId
+            "type" = "endpoint"
+        }
+    }
+    foreach ($pipelineId in $allPipelineIds) {
+        $authorizePipelineBody.pipelines += @{ "id" = $pipelineId; "authorized" = $true }
+    }
+    $authorizePipelineBodyJson = $authorizePipelineBody | ConvertTo-Json -Depth 10
+
+    $headers51 = @{
+        Authorization = "Basic $base64AuthInfo"
+        "Content-Type" = "application/json"
+        "Accept" = "application/json; api-version=5.1-preview.1"
+    }
+    try {
+        Invoke-RestMethod -Uri $authorizePipelineUrl -Headers $headers51 -Method Patch -Body $authorizePipelineBodyJson
+        Write-Host "All pipelines in project '$project' authorized to use service connection $serviceConnectionName."
+    } catch {
+        Write-Host "Failed to authorize all pipelines. Response:"
+        Write-Host $_.Exception.Message
+        if ($null -ne $_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $responseBody = $reader.ReadToEnd()
+            Write-Host $responseBody
+        }
+        Write-Host "The pipeline permissions API is not available for your organization. Please grant pipeline permissions manually in the Azure DevOps portal."
+    }
+} else {
+    Write-Host "No pipelines found or endpoint ID not set. Skipping pipeline authorization."
+}
+
+Write-Host "Service connection created and authorized for all pipelines."
