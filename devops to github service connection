@@ -1,0 +1,73 @@
+Write-Host " Fetching all projects in organization ''..."
+
+          $org = ""
+          $serviceConnectionName = "${{ parameters.ServiceConnectionName }}"
+
+          $azureDevOpsPAT = "${{ parameters.azureDevOpsPAT }}"
+          $githubPAT = "${{ parameters.githubPAT }}"
+
+          $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$azureDevOpsPAT"))
+
+          $projectsUrl = "https://dev.azure.com/$org/_apis/projects?api-version=7.0"
+          $projects = Invoke-RestMethod -Uri $projectsUrl -Headers @{ Authorization = "Basic $base64AuthInfo" }
+
+          if (-not $projects.value) {
+              Write-Error " No projects found in the organization."
+              exit 1
+          }
+
+          foreach ($project in $projects.value) {
+              $projectName = $project.name
+              $projectId = $project.id
+              Write-Host "Creating service connection in project: $projectName"
+
+              $checkUrl = "https://dev.azure.com/$org/$projectName/_apis/serviceendpoint/endpoints?api-version=7.1-preview.4"
+              $existing = Invoke-RestMethod -Uri $checkUrl -Headers @{ Authorization = "Basic $base64AuthInfo" }
+
+              if ($existing.value | Where-Object { $_.name -eq $serviceConnectionName }) {
+                  Write-Host " Service connection '$serviceConnectionName' already exists in $projectName"
+                  continue
+              }
+
+              $body = @{
+                  "name" = $serviceConnectionName
+                  "type" = "github"
+                  "url" = "https://github.com/"
+                  "authorization" = @{
+                      "scheme" = "PersonalAccessToken"
+                      "parameters" = @{
+                          "accessToken" = $githubPAT
+                      }
+                  }
+                  "data" = @{
+                      "accessToken" = $githubPAT
+                  }
+                  "serviceEndpointProjectReferences" = @(
+                      @{
+                          "projectReference" = @{
+                              "id" = $projectId
+                              "name" = $projectName
+                          }
+                          "name" = $serviceConnectionName
+                          "description" = "GitHub connection"
+                      }
+                  )
+              } | ConvertTo-Json -Depth 10
+
+              $createUrl = "https://dev.azure.com/$org/$projectName/_apis/serviceendpoint/endpoints?api-version=7.0-preview.4"
+              $headers = @{
+                  Authorization = "Basic $base64AuthInfo"
+                  "Content-Type" = "application/json"
+              }
+
+              try {
+                  $response = Invoke-RestMethod -Uri $createUrl -Headers $headers -Method Post -Body $body
+                  Write-Host " Service connection created in project '$projectName'."
+              } catch {
+                  Write-Host " Failed to create service connection in $projectName"
+                  Write-Host $_.Exception.Message
+              }
+          }
+      env:
+        azureDevOpsPAT: $(azureDevOpsPAT)
+        githubPAT: $(githubPAT)
