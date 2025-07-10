@@ -1,6 +1,30 @@
-Write-Host " Fetching all projects in organization ''..."
+trigger: none
 
-          $org = ""
+parameters:
+  - name: azureDevOpsPAT
+    displayName: Azure DevOps PAT
+    type: string
+  - name: githubPAT
+    displayName: GitHub PAT
+    type: string
+  - name: ServiceConnectionName
+    displayName: ServiceConnectionName
+    type: string
+pool:
+  vmImage: windows-latest
+
+jobs:
+- job: CreateServiceConnection
+  displayName: Create GitHub Service Connection in All Projects
+  steps:
+    - task: PowerShell@2
+      displayName: Create Service Connection
+      inputs:
+        targetType: 'inline'
+        script: |
+          Write-Host " Fetching all projects in organization 'Softwaregurukulam'..."
+
+          $org = "Softwaregurukulam"
           $serviceConnectionName = "${{ parameters.ServiceConnectionName }}"
 
           $azureDevOpsPAT = "${{ parameters.azureDevOpsPAT }}"
