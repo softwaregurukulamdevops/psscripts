@@ -1,0 +1,261 @@
+# Azure Policy Remediation Script
+# This script gets all policies in a tenant applied at all subscriptions and runs remediation
+
+param(
+    [string]$TenantId,
+    [string]$OutputPath = ".\policy-remediation-results.csv",
+    [switch]$DryRun = $false,
+    [string[]]$SpecificSubscriptions = @(),
+    [string[]]$ExcludeSubscriptions = @()
+)
+
+# Import required modules
+Write-Host "Checking and importing required Azure modules..." -ForegroundColor Cyan
+$requiredModules = @('Az.Accounts', 'Az.Resources', 'Az.PolicyInsights')
+
+foreach ($module in $requiredModules) {
+    if (!(Get-Module -ListAvailable -Name $module)) {
+        Write-Host "Installing module: $module" -ForegroundColor Yellow
+        Install-Module -Name $module -Force -Scope CurrentUser
+    }
+    Import-Module $module -Force
+}
+
+# Function to connect to Azure
+function Connect-ToAzure {
+    param([string]$TenantId)
+    
+    try {
+        if ($TenantId) {
+            Connect-AzAccount -TenantId $TenantId
+        } else {
+            Connect-AzAccount
+        }
+        $context = Get-AzContext
+        Write-Host "Connected to Azure Tenant: $($context.Tenant.Id)" -ForegroundColor Green
+        return $context
+    }
+    catch {
+        Write-Error "Failed to connect to Azure: $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+# Function to get all subscriptions in the tenant
+function Get-AllSubscriptions {
+    try {
+        $subscriptions = Get-AzSubscription
+        Write-Host "Found $($subscriptions.Count) subscription(s) in the tenant" -ForegroundColor Cyan
+        return $subscriptions
+    }
+    catch {
+        Write-Error "Failed to get subscriptions: $($_.Exception.Message)"
+        return @()
+    }
+}
+
+# Function to get policy assignments at all scopes
+function Get-PolicyAssignments {
+    param([array]$Subscriptions)
+    
+    $allAssignments = @()
+    
+    foreach ($subscription in $Subscriptions) {
+        try {
+            Write-Host "Processing subscription: $($subscription.Name) ($($subscription.Id))" -ForegroundColor White
+            Set-AzContext -SubscriptionId $subscription.Id | Out-Null
+            
+            # Get policy assignments at subscription level
+            $subscriptionAssignments = Get-AzPolicyAssignment -Scope "/subscriptions/$($subscription.Id)"
+            
+            # Get policy assignments at management group level that affect this subscription
+            $mgAssignments = Get-AzPolicyAssignment | Where-Object { 
+                $_.Properties.Scope -like "/providers/Microsoft.Management/managementGroups/*" 
+            }
+            
+            # Combine all assignments
+            $combinedAssignments = $subscriptionAssignments + $mgAssignments
+            
+            foreach ($assignment in $combinedAssignments) {
+                $allAssignments += [PSCustomObject]@{
+                    SubscriptionId = $subscription.Id
+                    SubscriptionName = $subscription.Name
+                    AssignmentId = $assignment.PolicyAssignmentId
+                    AssignmentName = $assignment.Name
+                    DisplayName = $assignment.Properties.DisplayName
+                    PolicyDefinitionId = $assignment.Properties.PolicyDefinitionId
+                    Scope = $assignment.Properties.Scope
+                    EnforcementMode = $assignment.Properties.EnforcementMode
+                    AssignmentType = if ($assignment.Properties.Scope -like "*managementGroups*") { "Management Group" } else { "Subscription" }
+                }
+            }
+        }
+        catch {
+            Write-Warning "Failed to process subscription $($subscription.Name): $($_.Exception.Message)"
+        }
+    }
+    
+    return $allAssignments
+}
+
+# Function to get policy compliance states
+function Get-PolicyCompliance {
+    param([array]$PolicyAssignments)
+    
+    $complianceResults = @()
+    
+    foreach ($assignment in $PolicyAssignments) {
+        try {
+            Set-AzContext -SubscriptionId $assignment.SubscriptionId | Out-Null
+            
+            Write-Host "Checking compliance for: $($assignment.DisplayName)" -ForegroundColor Gray
+            
+            $complianceStates = Get-AzPolicyState -PolicyAssignmentName $assignment.AssignmentName -Top 1000
+            
+            $nonCompliantResources = $complianceStates | Where-Object { $_.ComplianceState -eq "NonCompliant" }
+            
+            if ($nonCompliantResources.Count -gt 0) {
+                $complianceResults += [PSCustomObject]@{
+                    SubscriptionId = $assignment.SubscriptionId
+                    SubscriptionName = $assignment.SubscriptionName
+                    AssignmentId = $assignment.AssignmentId
+                    AssignmentName = $assignment.AssignmentName
+                    DisplayName = $assignment.DisplayName
+                    PolicyDefinitionId = $assignment.PolicyDefinitionId
+                    Scope = $assignment.Scope
+                    NonCompliantResourceCount = $nonCompliantResources.Count
+                    AssignmentType = $assignment.AssignmentType
+                    CanRemediate = $true
+                }
+            }
+        }
+        catch {
+            Write-Warning "Failed to get compliance for assignment $($assignment.AssignmentName): $($_.Exception.Message)"
+        }
+    }
+    
+    return $complianceResults
+}
+
+# Function to start policy remediation
+function Start-PolicyRemediation {
+    param(
+        [array]$NonCompliantAssignments,
+        [bool]$DryRun
+    )
+    
+    $remediationResults = @()
+    
+    foreach ($assignment in $NonCompliantAssignments) {
+        try {
+            Set-AzContext -SubscriptionId $assignment.SubscriptionId | Out-Null
+            
+            if ($DryRun) {
+                Write-Host "DRY RUN: Would start remediation for: $($assignment.DisplayName)" -ForegroundColor Yellow
+                $remediationResults += [PSCustomObject]@{
+                    SubscriptionName = $assignment.SubscriptionName
+                    AssignmentName = $assignment.AssignmentName
+                    DisplayName = $assignment.DisplayName
+                    Status = "DRY RUN - Would Remediate"
+                    RemediationId = "N/A"
+                    NonCompliantCount = $assignment.NonCompliantResourceCount
+                }
+            }
+            else {
+                Write-Host "Starting remediation for: $($assignment.DisplayName)" -ForegroundColor Green
+                
+                $remediationName = "Remediation-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($assignment.AssignmentName)"
+                
+                $remediation = Start-AzPolicyRemediation -Name $remediationName -PolicyAssignmentId $assignment.AssignmentId
+                
+                $remediationResults += [PSCustomObject]@{
+                    SubscriptionName = $assignment.SubscriptionName
+                    AssignmentName = $assignment.AssignmentName
+                    DisplayName = $assignment.DisplayName
+                    Status = "Remediation Started"
+                    RemediationId = $remediation.Id
+                    NonCompliantCount = $assignment.NonCompliantResourceCount
+                }
+            }
+        }
+        catch {
+            Write-Error "Failed to start remediation for $($assignment.DisplayName): $($_.Exception.Message)"
+            $remediationResults += [PSCustomObject]@{
+                SubscriptionName = $assignment.SubscriptionName
+                AssignmentName = $assignment.AssignmentName
+                DisplayName = $assignment.DisplayName
+                Status = "Failed: $($_.Exception.Message)"
+                RemediationId = "N/A"
+                NonCompliantCount = $assignment.NonCompliantResourceCount
+            }
+        }
+    }
+    
+    return $remediationResults
+}
+
+# Main execution
+try {
+    Write-Host "=== Azure Policy Remediation Script ===" -ForegroundColor Magenta
+    Write-Host "Starting at: $(Get-Date)" -ForegroundColor Cyan
+    
+    # Connect to Azure
+    $context = Connect-ToAzure -TenantId $TenantId
+    
+    # Get all subscriptions
+    $allSubscriptions = Get-AllSubscriptions
+    
+    # Filter subscriptions if specified
+    if ($SpecificSubscriptions.Count -gt 0) {
+        $allSubscriptions = $allSubscriptions | Where-Object { $_.Id -in $SpecificSubscriptions -or $_.Name -in $SpecificSubscriptions }
+        Write-Host "Filtered to $($allSubscriptions.Count) specific subscription(s)" -ForegroundColor Yellow
+    }
+    
+    if ($ExcludeSubscriptions.Count -gt 0) {
+        $allSubscriptions = $allSubscriptions | Where-Object { $_.Id -notin $ExcludeSubscriptions -and $_.Name -notin $ExcludeSubscriptions }
+        Write-Host "Excluded $($ExcludeSubscriptions.Count) subscription(s)" -ForegroundColor Yellow
+    }
+    
+    if ($allSubscriptions.Count -eq 0) {
+        Write-Error "No subscriptions found to process"
+        exit 1
+    }
+    
+    # Get all policy assignments
+    Write-Host "`nGetting policy assignments across all subscriptions..." -ForegroundColor Cyan
+    $policyAssignments = Get-PolicyAssignments -Subscriptions $allSubscriptions
+    Write-Host "Found $($policyAssignments.Count) policy assignment(s)" -ForegroundColor Green
+    
+    # Get compliance states
+    Write-Host "`nChecking policy compliance..." -ForegroundColor Cyan
+    $nonCompliantAssignments = Get-PolicyCompliance -PolicyAssignments $policyAssignments
+    Write-Host "Found $($nonCompliantAssignments.Count) assignment(s) with non-compliant resources" -ForegroundColor Yellow
+    
+    if ($nonCompliantAssignments.Count -eq 0) {
+        Write-Host "No non-compliant resources found. All policies are compliant!" -ForegroundColor Green
+        exit 0
+    }
+    
+    # Display summary
+    Write-Host "`n=== SUMMARY ===" -ForegroundColor Magenta
+    $nonCompliantAssignments | Format-Table SubscriptionName, DisplayName, NonCompliantResourceCount, AssignmentType -AutoSize
+    
+    # Start remediation
+    Write-Host "`nStarting policy remediation..." -ForegroundColor Cyan
+    $remediationResults = Start-PolicyRemediation -NonCompliantAssignments $nonCompliantAssignments -DryRun $DryRun
+    
+    # Export results
+    $remediationResults | Export-Csv -Path $OutputPath -NoTypeInformation
+    Write-Host "`nResults exported to: $OutputPath" -ForegroundColor Green
+    
+    # Display final summary
+    Write-Host "`n=== REMEDIATION RESULTS ===" -ForegroundColor Magenta
+    $remediationResults | Format-Table SubscriptionName, DisplayName, Status, NonCompliantCount -AutoSize
+    
+    Write-Host "`nScript completed at: $(Get-Date)" -ForegroundColor Cyan
+}
+catch {
+    Write-Error "Script failed: $($_.Exception.Message)"
+    exit 1
+}
+Pol
