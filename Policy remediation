@@ -1,261 +1,615 @@
-# Azure Policy Remediation Script
-# This script gets all policies in a tenant applied at all subscriptions and runs remediation
+<#
+.SYNOPSIS
+    Azure Policy Remediation Script - Tenant Level (Automation Account)
 
-param(
-    [string]$TenantId,
-    [string]$OutputPath = ".\policy-remediation-results.csv",
-    [switch]$DryRun = $false,
-    [string[]]$SpecificSubscriptions = @(),
-    [string[]]$ExcludeSubscriptions = @()
-)
+.DESCRIPTION
+    This script discovers all policy assignments across the entire tenant and performs remediation tasks.
+    It can handle remediation at subscription, management group, and resource group levels.
+    Designed to run in Azure Automation Account with hardcoded configuration.
 
-# Import required modules
-Write-Host "Checking and importing required Azure modules..." -ForegroundColor Cyan
-$requiredModules = @('Az.Accounts', 'Az.Resources', 'Az.PolicyInsights')
+.EXAMPLE
+    # Run from Azure Automation Account
+    .\remediate-tenant-policies.ps1
+#>
 
-foreach ($module in $requiredModules) {
-    if (!(Get-Module -ListAvailable -Name $module)) {
-        Write-Host "Installing module: $module" -ForegroundColor Yellow
-        Install-Module -Name $module -Force -Scope CurrentUser
-    }
-    Import-Module $module -Force
-}
+# Configuration - Update these values as needed
+$TenantId = "24c341f8-8c8f-44ef-a388-6fa08c3eef6a"  # Hardcoded tenant ID
+$RemediationMode = "NonCompliantOnly"  # Options: All, FailedOnly, NonCompliantOnly
+$DryRun = $false  # Set to $true for testing
+$MaxRemediationTasks = 5
+$SkipUserConfirmation = $true  # Always true for automation account
 
-# Function to connect to Azure
-function Connect-ToAzure {
-    param([string]$TenantId)
-    
+# Connect to Azure using Automation Account Managed Identity
+function Connect-AzureAutomation {
     try {
-        if ($TenantId) {
-            Connect-AzAccount -TenantId $TenantId
-        } else {
-            Connect-AzAccount
+        Write-Output "Connecting to Azure using Automation Account Managed Identity..."
+        
+        # Try to connect using managed identity first
+        try {
+            $context = Connect-AzAccount -Identity -TenantId $TenantId -ErrorAction Stop
+            Write-Output "Successfully connected using System Managed Identity"
+            Write-Output "Account: $($context.Context.Account.Id)"
+            Write-Output "Tenant: $($context.Context.Tenant.Id)"
+            return $true
         }
-        $context = Get-AzContext
-        Write-Host "Connected to Azure Tenant: $($context.Tenant.Id)" -ForegroundColor Green
-        return $context
+        catch {
+            Write-Output "Managed Identity connection failed: $($_.Exception.Message)"
+            
+            # Fallback to Run As Connection (legacy)
+            Write-Output "Attempting fallback to Run As Connection..."
+            try {
+                $connection = Get-AutomationConnection -Name "AzureRunAsConnection"
+                
+                Connect-AzAccount -ServicePrincipal `
+                    -TenantId $connection.TenantId `
+                    -ApplicationId $connection.ApplicationId `
+                    -CertificateThumbprint $connection.CertificateThumbprint `
+                    -ErrorAction Stop
+                
+                Write-Output "Successfully connected using Run As Connection"
+                return $true
+            }
+            catch {
+                Write-Error "Run As Connection also failed: $($_.Exception.Message)"
+                return $false
+            }
+        }
     }
     catch {
         Write-Error "Failed to connect to Azure: $($_.Exception.Message)"
-        exit 1
+        return $false
     }
 }
 
-# Function to get all subscriptions in the tenant
+# Import required Az modules (modern modules for automation account)
+try {
+    Write-Output "Importing required Azure modules..."
+    Import-Module Az.Accounts -Force -ErrorAction Stop
+    Import-Module Az.Resources -Force -ErrorAction Stop
+    Import-Module Az.PolicyInsights -Force -ErrorAction Stop
+    Write-Output "Azure modules imported successfully"
+}
+catch {
+    Write-Error "Failed to import Azure modules: $($_.Exception.Message)"
+    throw "Required Azure modules not available"
+}
+
+# Global variables
+$ErrorActionPreference = "Continue"
+$ProgressPreference = "SilentlyContinue"
+$RemediationResults = @()
+$PolicyAssignments = @()
+
+#region Helper Functions
+function Write-Log {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+        
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("INFO", "WARNING", "ERROR", "SUCCESS", "PROGRESS")]
+        [string]$Level = "INFO"
+    )
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "[$timestamp] [$Level] $Message"
+    
+    # Use Write-Output for automation account compatibility
+    switch ($Level) {
+        "INFO" { Write-Output $logMessage }
+        "WARNING" { Write-Warning $logMessage; Write-Output $logMessage }
+        "ERROR" { Write-Error $logMessage; Write-Output $logMessage }
+        "SUCCESS" { Write-Output $logMessage }
+        "PROGRESS" { Write-Output $logMessage }
+    }
+}
+
+function Test-AzureConnection {
+    try {
+        $context = Get-AzContext
+        if ($context -and $context.Tenant.Id -eq $TenantId) {
+            Write-Log "Connected to Azure tenant: $($context.Tenant.Id)" -Level "SUCCESS"
+            Write-Log "Current account: $($context.Account.Id)" -Level "INFO"
+            return $true
+        }
+        else {
+            Write-Log "Not connected to the correct tenant. Expected: $TenantId" -Level "ERROR"
+            return $false
+        }
+    }
+    catch {
+        Write-Log "Error checking Azure connection: $($_.Exception.Message)" -Level "ERROR"
+        return $false
+    }
+}
+
 function Get-AllSubscriptions {
     try {
-        $subscriptions = Get-AzSubscription
-        Write-Host "Found $($subscriptions.Count) subscription(s) in the tenant" -ForegroundColor Cyan
+        Write-Log "Retrieving all subscriptions in tenant..." -Level "PROGRESS"
+        $subscriptions = Get-AzSubscription -TenantId $TenantId | Where-Object { $_.State -eq "Enabled" }
+        
+        Write-Log "Found $($subscriptions.Count) enabled subscriptions" -Level "SUCCESS"
         return $subscriptions
     }
     catch {
-        Write-Error "Failed to get subscriptions: $($_.Exception.Message)"
+        Write-Log "Error retrieving subscriptions: $($_.Exception.Message)" -Level "ERROR"
         return @()
     }
 }
 
-# Function to get policy assignments at all scopes
-function Get-PolicyAssignments {
-    param([array]$Subscriptions)
-    
-    $allAssignments = @()
-    
-    foreach ($subscription in $Subscriptions) {
-        try {
-            Write-Host "Processing subscription: $($subscription.Name) ($($subscription.Id))" -ForegroundColor White
-            Set-AzContext -SubscriptionId $subscription.Id | Out-Null
-            
-            # Get policy assignments at subscription level
-            $subscriptionAssignments = Get-AzPolicyAssignment -Scope "/subscriptions/$($subscription.Id)"
-            
-            # Get policy assignments at management group level that affect this subscription
-            $mgAssignments = Get-AzPolicyAssignment | Where-Object { 
-                $_.Properties.Scope -like "/providers/Microsoft.Management/managementGroups/*" 
-            }
-            
-            # Combine all assignments
-            $combinedAssignments = $subscriptionAssignments + $mgAssignments
-            
-            foreach ($assignment in $combinedAssignments) {
-                $allAssignments += [PSCustomObject]@{
-                    SubscriptionId = $subscription.Id
-                    SubscriptionName = $subscription.Name
-                    AssignmentId = $assignment.PolicyAssignmentId
-                    AssignmentName = $assignment.Name
-                    DisplayName = $assignment.Properties.DisplayName
-                    PolicyDefinitionId = $assignment.Properties.PolicyDefinitionId
-                    Scope = $assignment.Properties.Scope
-                    EnforcementMode = $assignment.Properties.EnforcementMode
-                    AssignmentType = if ($assignment.Properties.Scope -like "*managementGroups*") { "Management Group" } else { "Subscription" }
+function Get-AllManagementGroups {
+    try {
+        Write-Log "Retrieving all management groups..." -Level "PROGRESS"
+        $managementGroups = Get-AzManagementGroup -ErrorAction SilentlyContinue
+        if ($managementGroups) {
+            Write-Log "Found $($managementGroups.Count) management groups" -Level "SUCCESS"
+        } else {
+            Write-Log "No management groups found or insufficient permissions" -Level "WARNING"
+        }
+        return $managementGroups
+    }
+    catch {
+        Write-Log "Error retrieving management groups: $($_.Exception.Message)" -Level "WARNING"
+        return @()
+    }
+}
+#endregion
+
+#region Policy Discovery Functions
+function Get-TenantPolicyAssignments {
+    try {
+        Write-Log "Discovering policy assignments across tenant..." -Level "PROGRESS"
+        $allAssignments = @()
+        
+        # Get assignments at management group level
+        $managementGroups = Get-AllManagementGroups
+        foreach ($mg in $managementGroups) {
+            try {
+                Write-Log "Checking management group: $($mg.DisplayName)" -Level "PROGRESS"
+                $mgAssignments = Get-AzPolicyAssignment -Scope $mg.Id -ErrorAction SilentlyContinue
+                
+                foreach ($assignment in $mgAssignments) {
+                    $displayName = if ($assignment.DisplayName) { $assignment.DisplayName } else { $assignment.Name }
+                    if (!$displayName) { $displayName = "Policy Assignment $($assignment.Name)" }
+                    
+                    $allAssignments += [PSCustomObject]@{
+                        Name = $assignment.Name
+                        DisplayName = $displayName
+                        Id = $assignment.PolicyAssignmentId
+                        Scope = $assignment.Scope
+                        ScopeType = "ManagementGroup"
+                        ManagementGroupName = $mg.DisplayName
+                        PolicyDefinitionId = $assignment.PolicyDefinitionId
+                        EnforcementMode = $assignment.EnforcementMode
+                        Parameters = $assignment.Parameters
+                    }
                 }
             }
+            catch {
+                Write-Log "Error getting assignments for MG $($mg.DisplayName): $($_.Exception.Message)" -Level "WARNING"
+            }
         }
-        catch {
-            Write-Warning "Failed to process subscription $($subscription.Name): $($_.Exception.Message)"
+        
+        # Get assignments at subscription level
+        $subscriptions = Get-AllSubscriptions
+        foreach ($subscription in $subscriptions) {
+            try {
+                Write-Log "Checking subscription: $($subscription.Name)" -Level "PROGRESS"
+                Set-AzContext -SubscriptionId $subscription.Id | Out-Null
+                
+                $subAssignments = Get-AzPolicyAssignment -ErrorAction SilentlyContinue
+                
+                foreach ($assignment in $subAssignments) {
+                    $displayName = if ($assignment.DisplayName) { $assignment.DisplayName } else { $assignment.Name }
+                    if (!$displayName) { $displayName = "Policy Assignment $($assignment.Name)" }
+                    
+                    $allAssignments += [PSCustomObject]@{
+                        Name = $assignment.Name
+                        DisplayName = $displayName
+                        Id = $assignment.PolicyAssignmentId
+                        Scope = $assignment.Scope
+                        ScopeType = "Subscription"
+                        SubscriptionName = $subscription.Name
+                        PolicyDefinitionId = $assignment.PolicyDefinitionId
+                        EnforcementMode = $assignment.EnforcementMode
+                        Parameters = $assignment.Parameters
+                    }
+                }
+                
+                # Get resource group level assignments
+                $resourceGroups = Get-AzResourceGroup
+                foreach ($rg in $resourceGroups) {
+                    try {
+                        $rgAssignments = Get-AzPolicyAssignment -Scope "/subscriptions/$($subscription.Id)/resourceGroups/$($rg.ResourceGroupName)" -ErrorAction SilentlyContinue
+                        
+                        foreach ($assignment in $rgAssignments) {
+                            $displayName = if ($assignment.DisplayName) { $assignment.DisplayName } else { $assignment.Name }
+                            if (!$displayName) { $displayName = "Policy Assignment $($assignment.Name)" }
+                            
+                            $allAssignments += [PSCustomObject]@{
+                                Name = $assignment.Name
+                                DisplayName = $displayName
+                                Id = $assignment.PolicyAssignmentId
+                                Scope = $assignment.Scope
+                                ScopeType = "ResourceGroup"
+                                SubscriptionName = $subscription.Name
+                                ResourceGroupName = $rg.ResourceGroupName
+                                PolicyDefinitionId = $assignment.PolicyDefinitionId
+                                EnforcementMode = $assignment.EnforcementMode
+                                Parameters = $assignment.Parameters
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Log "Error getting assignments for RG $($rg.ResourceGroupName): $($_.Exception.Message)" -Level "WARNING"
+                    }
+                }
+            }
+            catch {
+                Write-Log "Error processing subscription $($subscription.Name): $($_.Exception.Message)" -Level "WARNING"
+            }
         }
+        
+        Write-Log "Found $($allAssignments.Count) total policy assignments" -Level "SUCCESS"
+        return $allAssignments
     }
-    
-    return $allAssignments
+    catch {
+        Write-Log "Error discovering policy assignments: $($_.Exception.Message)" -Level "ERROR"
+        return @()
+    }
 }
 
-# Function to get policy compliance states
-function Get-PolicyCompliance {
-    param([array]$PolicyAssignments)
+function Get-PolicyComplianceState {
+    param([object]$Assignment)
     
-    $complianceResults = @()
-    
-    foreach ($assignment in $PolicyAssignments) {
+    try {
+        $assignmentName = if ($Assignment.DisplayName) { $Assignment.DisplayName } else { $Assignment.Name }
+        if (!$assignmentName) { $assignmentName = "Unknown Assignment" }
+        
+        Write-Log "Checking compliance for: $assignmentName" -Level "PROGRESS"
+        
+        # Get policy states for this assignment using modern Az modules
         try {
-            Set-AzContext -SubscriptionId $assignment.SubscriptionId | Out-Null
+            $policyStates = Get-AzPolicyState -PolicyAssignmentName $Assignment.Name -ErrorAction SilentlyContinue
             
-            Write-Host "Checking compliance for: $($assignment.DisplayName)" -ForegroundColor Gray
-            
-            $complianceStates = Get-AzPolicyState -PolicyAssignmentName $assignment.AssignmentName -Top 1000
-            
-            $nonCompliantResources = $complianceStates | Where-Object { $_.ComplianceState -eq "NonCompliant" }
-            
-            if ($nonCompliantResources.Count -gt 0) {
-                $complianceResults += [PSCustomObject]@{
-                    SubscriptionId = $assignment.SubscriptionId
-                    SubscriptionName = $assignment.SubscriptionName
-                    AssignmentId = $assignment.AssignmentId
-                    AssignmentName = $assignment.AssignmentName
-                    DisplayName = $assignment.DisplayName
-                    PolicyDefinitionId = $assignment.PolicyDefinitionId
-                    Scope = $assignment.Scope
-                    NonCompliantResourceCount = $nonCompliantResources.Count
-                    AssignmentType = $assignment.AssignmentType
-                    CanRemediate = $true
+            if ($policyStates) {
+                $totalResources = $policyStates.Count
+                $compliantResources = ($policyStates | Where-Object { $_.ComplianceState -eq "Compliant" }).Count
+                $nonCompliantResources = ($policyStates | Where-Object { $_.ComplianceState -eq "NonCompliant" }).Count
+                
+                $compliancePercentage = if ($totalResources -gt 0) { 
+                    [math]::Round(($compliantResources / $totalResources) * 100, 2) 
+                } else { 
+                    100 
                 }
-            }
-        }
-        catch {
-            Write-Warning "Failed to get compliance for assignment $($assignment.AssignmentName): $($_.Exception.Message)"
-        }
-    }
-    
-    return $complianceResults
-}
-
-# Function to start policy remediation
-function Start-PolicyRemediation {
-    param(
-        [array]$NonCompliantAssignments,
-        [bool]$DryRun
-    )
-    
-    $remediationResults = @()
-    
-    foreach ($assignment in $NonCompliantAssignments) {
-        try {
-            Set-AzContext -SubscriptionId $assignment.SubscriptionId | Out-Null
-            
-            if ($DryRun) {
-                Write-Host "DRY RUN: Would start remediation for: $($assignment.DisplayName)" -ForegroundColor Yellow
-                $remediationResults += [PSCustomObject]@{
-                    SubscriptionName = $assignment.SubscriptionName
-                    AssignmentName = $assignment.AssignmentName
-                    DisplayName = $assignment.DisplayName
-                    Status = "DRY RUN - Would Remediate"
-                    RemediationId = "N/A"
-                    NonCompliantCount = $assignment.NonCompliantResourceCount
-                }
+                
+                $requiresRemediation = $nonCompliantResources -gt 0
             }
             else {
-                Write-Host "Starting remediation for: $($assignment.DisplayName)" -ForegroundColor Green
-                
-                $remediationName = "Remediation-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($assignment.AssignmentName)"
-                
-                $remediation = Start-AzPolicyRemediation -Name $remediationName -PolicyAssignmentId $assignment.AssignmentId
-                
-                $remediationResults += [PSCustomObject]@{
-                    SubscriptionName = $assignment.SubscriptionName
-                    AssignmentName = $assignment.AssignmentName
-                    DisplayName = $assignment.DisplayName
-                    Status = "Remediation Started"
-                    RemediationId = $remediation.Id
-                    NonCompliantCount = $assignment.NonCompliantResourceCount
-                }
+                # No policy states found - either no resources or policy doesn't apply
+                $totalResources = 0
+                $compliantResources = 0
+                $nonCompliantResources = 0
+                $compliancePercentage = 100
+                $requiresRemediation = $false
             }
         }
         catch {
-            Write-Error "Failed to start remediation for $($assignment.DisplayName): $($_.Exception.Message)"
-            $remediationResults += [PSCustomObject]@{
-                SubscriptionName = $assignment.SubscriptionName
-                AssignmentName = $assignment.AssignmentName
-                DisplayName = $assignment.DisplayName
-                Status = "Failed: $($_.Exception.Message)"
-                RemediationId = "N/A"
-                NonCompliantCount = $assignment.NonCompliantResourceCount
+            Write-Log "Could not retrieve policy states for $assignmentName, using default values" -Level "WARNING"
+            $totalResources = 0
+            $compliantResources = 0
+            $nonCompliantResources = 0
+            $compliancePercentage = 100
+            $requiresRemediation = $false
+        }
+        
+        return [PSCustomObject]@{
+            Assignment = $Assignment
+            TotalResources = $totalResources
+            CompliantResources = $compliantResources
+            NonCompliantResources = $nonCompliantResources
+            CompliancePercentage = $compliancePercentage
+            RequiresRemediation = $requiresRemediation
+        }
+    }
+    catch {
+        Write-Log "Error checking compliance for $($Assignment.DisplayName): $($_.Exception.Message)" -Level "WARNING"
+        return [PSCustomObject]@{
+            Assignment = $Assignment
+            TotalResources = 0
+            CompliantResources = 0
+            NonCompliantResources = 0
+            CompliancePercentage = 0
+            RequiresRemediation = $false
+            Error = $_.Exception.Message
+        }
+    }
+}
+#endregion
+
+#region Remediation Functions
+function Start-PolicyRemediation {
+    param(
+        [object]$ComplianceInfo,
+        [bool]$DryRunMode = $false
+    )
+    
+    try {
+        $assignment = $ComplianceInfo.Assignment
+        
+        if (!$ComplianceInfo.RequiresRemediation) {
+            Write-Log "No remediation needed for: $($assignment.DisplayName)" -Level "INFO"
+            return [PSCustomObject]@{
+                AssignmentName = $assignment.DisplayName
+                Status = "NoRemediationNeeded"
+                Message = "All resources are compliant"
+            }
+        }
+        
+        if ($DryRunMode) {
+            Write-Log "[DRY RUN] Would remediate: $($assignment.DisplayName) ($($ComplianceInfo.NonCompliantResources) non-compliant resources)" -Level "WARNING"
+            return [PSCustomObject]@{
+                AssignmentName = $assignment.DisplayName
+                Status = "DryRun"
+                NonCompliantResources = $ComplianceInfo.NonCompliantResources
+                Message = "Dry run - no actual remediation performed"
+            }
+        }
+        
+        Write-Log "Starting remediation for: $($assignment.DisplayName)" -Level "PROGRESS"
+        
+        # Check if the policy definition supports remediation
+        try {
+            $policyDefinition = Get-AzPolicyDefinition -Id $assignment.PolicyDefinitionId
+            $supportsRemediation = $false
+            
+            # Check if policy has DeployIfNotExists or Modify effect
+            if ($policyDefinition.Properties.PolicyRule.then.effect -in @("DeployIfNotExists", "Modify")) {
+                $supportsRemediation = $true
+            }
+        }
+        catch {
+            Write-Log "Could not retrieve policy definition for $($assignment.DisplayName)" -Level "WARNING"
+            $supportsRemediation = $false
+        }
+        
+        if (!$supportsRemediation) {
+            Write-Log "Policy does not support automatic remediation: $($assignment.DisplayName)" -Level "WARNING"
+            return [PSCustomObject]@{
+                AssignmentName = $assignment.DisplayName
+                Status = "NotSupported"
+                Message = "Policy effect does not support automatic remediation"
+            }
+        }
+        
+        # Start remediation task
+        $remediationName = "remediation-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($assignment.Name)"
+        
+        try {
+            $remediationTask = Start-AzPolicyRemediation -Name $remediationName -PolicyAssignmentId $assignment.Id -ErrorAction Stop
+            
+            Write-Log "Remediation task started: $remediationName" -Level "SUCCESS"
+            return [PSCustomObject]@{
+                AssignmentName = $assignment.DisplayName
+                Status = "Started"
+                RemediationTaskName = $remediationName
+                RemediationTaskId = $remediationTask.Id
+                Message = "Remediation task started successfully"
+                Assignment = $assignment
+            }
+        }
+        catch {
+            Write-Log "Failed to start remediation for $($assignment.DisplayName): $($_.Exception.Message)" -Level "ERROR"
+            return [PSCustomObject]@{
+                AssignmentName = $assignment.DisplayName
+                Status = "Failed"
+                Message = "Failed to start remediation: $($_.Exception.Message)"
             }
         }
     }
-    
-    return $remediationResults
+    catch {
+        Write-Log "Error during remediation for $($assignment.DisplayName): $($_.Exception.Message)" -Level "ERROR"
+        return [PSCustomObject]@{
+            AssignmentName = $assignment.DisplayName
+            Status = "Error"
+            Message = $_.Exception.Message
+        }
+    }
 }
 
-# Main execution
+function Wait-ForRemediationCompletion {
+    param([array]$RemediationTasks)
+    
+    if ($RemediationTasks.Count -eq 0) {
+        return
+    }
+    
+    Write-Log "Monitoring $($RemediationTasks.Count) remediation tasks..." -Level "PROGRESS"
+    
+    $runningTasks = $RemediationTasks | Where-Object { $_.Status -eq "Started" }
+    $maxWaitMinutes = 30
+    $startTime = Get-Date
+    
+    while ($runningTasks.Count -gt 0) {
+        # Check timeout
+        $elapsedMinutes = ((Get-Date) - $startTime).TotalMinutes
+        if ($elapsedMinutes -gt $maxWaitMinutes) {
+            Write-Log "Timeout reached ($maxWaitMinutes minutes). Stopping remediation monitoring." -Level "WARNING"
+            break
+        }
+        
+        Start-Sleep -Seconds 30
+        
+        foreach ($task in $runningTasks) {
+            try {
+                $remediationStatus = Get-AzPolicyRemediation -Name $task.RemediationTaskName -Scope $task.Assignment.Scope
+                
+                if ($remediationStatus.ProvisioningState -eq "Succeeded") {
+                    Write-Log "Remediation completed: $($task.AssignmentName)" -Level "SUCCESS"
+                    $task.Status = "Completed"
+                }
+                elseif ($remediationStatus.ProvisioningState -eq "Failed") {
+                    Write-Log "Remediation failed: $($task.AssignmentName)" -Level "ERROR"
+                    $task.Status = "Failed"
+                    $task.Message = "Remediation task failed"
+                }
+            }
+            catch {
+                Write-Log "Error checking remediation status for $($task.AssignmentName): $($_.Exception.Message)" -Level "WARNING"
+            }
+        }
+        
+        $runningTasks = $RemediationTasks | Where-Object { $_.Status -eq "Started" }
+        
+        if ($runningTasks.Count -gt 0) {
+            Write-Log "Still waiting for $($runningTasks.Count) remediation tasks to complete... (Elapsed: $([math]::Round($elapsedMinutes, 1)) minutes)" -Level "PROGRESS"
+        }
+    }
+    
+    Write-Log "Remediation monitoring completed" -Level "SUCCESS"
+}
+#endregion
+
+#region Main Script
+function Main {
+    Write-Log "Starting Azure Policy Remediation - Tenant Level (Automation Account)" -Level "SUCCESS"
+    Write-Log "Tenant ID: $TenantId" -Level "INFO"
+    Write-Log "Remediation Mode: $RemediationMode" -Level "INFO"
+    Write-Log "Dry Run: $DryRun" -Level "INFO"
+    
+    # Connect to Azure using Automation Account identity
+    if (!(Connect-AzureAutomation)) {
+        Write-Log "Failed to connect to Azure. Exiting." -Level "ERROR"
+        throw "Azure connection failed"
+    }
+    
+    # Verify connection
+    if (!(Test-AzureConnection)) {
+        Write-Log "Azure connection verification failed. Exiting." -Level "ERROR"
+        throw "Azure connection verification failed"
+    }
+    
+    # Discover all policy assignments
+    Write-Log "Phase 1: Discovering policy assignments..." -Level "PROGRESS"
+    $PolicyAssignments = Get-TenantPolicyAssignments
+    
+    if ($PolicyAssignments.Count -eq 0) {
+        Write-Log "No policy assignments found matching the criteria" -Level "WARNING"
+        return
+    }
+    
+    # Check compliance state for each assignment
+    Write-Log "Phase 2: Checking compliance state..." -Level "PROGRESS"
+    $ComplianceData = @()
+    
+    foreach ($assignment in $PolicyAssignments) {
+        $complianceInfo = Get-PolicyComplianceState -Assignment $assignment
+        $ComplianceData += $complianceInfo
+    }
+    
+    # Filter based on remediation mode
+    $AssignmentsToRemediate = switch ($RemediationMode) {
+        "All" { $ComplianceData }
+        "FailedOnly" { $ComplianceData | Where-Object { $_.Error } }
+        "NonCompliantOnly" { $ComplianceData | Where-Object { $_.RequiresRemediation } }
+    }
+    
+    Write-Log "Found $($AssignmentsToRemediate.Count) assignments requiring remediation" -Level "SUCCESS"
+    
+    # Display compliance summary (limited in automation account)
+    Write-Log "=== COMPLIANCE SUMMARY ===" -Level "INFO"
+    $complianceSummary = @{
+        TotalAssignments = $ComplianceData.Count
+        CompliantAssignments = ($ComplianceData | Where-Object { $_.RequiresRemediation -eq $false }).Count
+        NonCompliantAssignments = ($ComplianceData | Where-Object { $_.RequiresRemediation -eq $true }).Count
+        TotalResources = ($ComplianceData | Measure-Object -Property TotalResources -Sum).Sum
+        CompliantResources = ($ComplianceData | Measure-Object -Property CompliantResources -Sum).Sum
+        NonCompliantResources = ($ComplianceData | Measure-Object -Property NonCompliantResources -Sum).Sum
+    }
+    
+    Write-Log "Total Assignments: $($complianceSummary.TotalAssignments)" -Level "INFO"
+    Write-Log "Compliant Assignments: $($complianceSummary.CompliantAssignments)" -Level "SUCCESS"
+    Write-Log "Non-Compliant Assignments: $($complianceSummary.NonCompliantAssignments)" -Level "WARNING"
+    Write-Log "Total Resources: $($complianceSummary.TotalResources)" -Level "INFO"
+    Write-Log "Compliant Resources: $($complianceSummary.CompliantResources)" -Level "SUCCESS"
+    Write-Log "Non-Compliant Resources: $($complianceSummary.NonCompliantResources)" -Level "WARNING"
+    
+    if ($AssignmentsToRemediate.Count -eq 0) {
+        Write-Log "No assignments require remediation" -Level "SUCCESS"
+        return
+    }
+    
+    # Start remediation (no user confirmation in automation account)
+    Write-Log "Phase 3: Starting remediation tasks..." -Level "PROGRESS"
+    $RemediationResults = @()
+    $activeRemediations = 0
+    
+    foreach ($complianceInfo in $AssignmentsToRemediate) {
+        # Throttle concurrent remediation tasks
+        while ($activeRemediations -ge $MaxRemediationTasks) {
+            Start-Sleep -Seconds 10
+            # Check for completed tasks and reduce counter
+            $activeRemediations = ($RemediationResults | Where-Object { $_.Status -eq "Started" }).Count
+        }
+        
+        $remediationResult = Start-PolicyRemediation -ComplianceInfo $complianceInfo -DryRunMode $DryRun
+        $RemediationResults += $remediationResult
+        
+        if ($remediationResult.Status -eq "Started") {
+            $activeRemediations++
+        }
+    }
+    
+    # Wait for all remediation tasks to complete (with timeout)
+    if (!$DryRun) {
+        Wait-ForRemediationCompletion -RemediationTasks $RemediationResults
+    }
+    
+    # Display final results
+    Write-Log "=== REMEDIATION RESULTS ===" -Level "SUCCESS"
+    $resultSummary = @{
+        Total = $RemediationResults.Count
+        Successful = ($RemediationResults | Where-Object { $_.Status -in @("Completed", "DryRun", "NoRemediationNeeded") }).Count
+        Failed = ($RemediationResults | Where-Object { $_.Status -in @("Failed", "Error") }).Count
+        NotSupported = ($RemediationResults | Where-Object { $_.Status -eq "NotSupported" }).Count
+    }
+    
+    Write-Log "Total assignments processed: $($resultSummary.Total)" -Level "INFO"
+    Write-Log "Successful remediations: $($resultSummary.Successful)" -Level "SUCCESS"
+    Write-Log "Failed remediations: $($resultSummary.Failed)" -Level $(if ($resultSummary.Failed -gt 0) { "ERROR" } else { "INFO" })
+    Write-Log "Not supported: $($resultSummary.NotSupported)" -Level "INFO"
+    
+    # Log individual results for troubleshooting
+    foreach ($result in $RemediationResults) {
+        Write-Log "Assignment: $($result.AssignmentName) | Status: $($result.Status) | Message: $($result.Message)" -Level "INFO"
+    }
+    
+    if ($DryRun) {
+        Write-Log "This was a dry run - no actual remediation was performed" -Level "WARNING"
+    }
+    
+    Write-Log "Tenant-level policy remediation completed" -Level "SUCCESS"
+    
+    # Return summary for automation account output
+    return [PSCustomObject]@{
+        ExecutionTime = Get-Date
+        TenantId = $TenantId
+        Mode = $RemediationMode
+        DryRun = $DryRun
+        ComplianceSummary = $complianceSummary
+        RemediationSummary = $resultSummary
+        Details = $RemediationResults
+    }
+}
+
+# Execute main function and handle errors for Automation Account
 try {
-    Write-Host "=== Azure Policy Remediation Script ===" -ForegroundColor Magenta
-    Write-Host "Starting at: $(Get-Date)" -ForegroundColor Cyan
-    
-    # Connect to Azure
-    $context = Connect-ToAzure -TenantId $TenantId
-    
-    # Get all subscriptions
-    $allSubscriptions = Get-AllSubscriptions
-    
-    # Filter subscriptions if specified
-    if ($SpecificSubscriptions.Count -gt 0) {
-        $allSubscriptions = $allSubscriptions | Where-Object { $_.Id -in $SpecificSubscriptions -or $_.Name -in $SpecificSubscriptions }
-        Write-Host "Filtered to $($allSubscriptions.Count) specific subscription(s)" -ForegroundColor Yellow
-    }
-    
-    if ($ExcludeSubscriptions.Count -gt 0) {
-        $allSubscriptions = $allSubscriptions | Where-Object { $_.Id -notin $ExcludeSubscriptions -and $_.Name -notin $ExcludeSubscriptions }
-        Write-Host "Excluded $($ExcludeSubscriptions.Count) subscription(s)" -ForegroundColor Yellow
-    }
-    
-    if ($allSubscriptions.Count -eq 0) {
-        Write-Error "No subscriptions found to process"
-        exit 1
-    }
-    
-    # Get all policy assignments
-    Write-Host "`nGetting policy assignments across all subscriptions..." -ForegroundColor Cyan
-    $policyAssignments = Get-PolicyAssignments -Subscriptions $allSubscriptions
-    Write-Host "Found $($policyAssignments.Count) policy assignment(s)" -ForegroundColor Green
-    
-    # Get compliance states
-    Write-Host "`nChecking policy compliance..." -ForegroundColor Cyan
-    $nonCompliantAssignments = Get-PolicyCompliance -PolicyAssignments $policyAssignments
-    Write-Host "Found $($nonCompliantAssignments.Count) assignment(s) with non-compliant resources" -ForegroundColor Yellow
-    
-    if ($nonCompliantAssignments.Count -eq 0) {
-        Write-Host "No non-compliant resources found. All policies are compliant!" -ForegroundColor Green
-        exit 0
-    }
-    
-    # Display summary
-    Write-Host "`n=== SUMMARY ===" -ForegroundColor Magenta
-    $nonCompliantAssignments | Format-Table SubscriptionName, DisplayName, NonCompliantResourceCount, AssignmentType -AutoSize
-    
-    # Start remediation
-    Write-Host "`nStarting policy remediation..." -ForegroundColor Cyan
-    $remediationResults = Start-PolicyRemediation -NonCompliantAssignments $nonCompliantAssignments -DryRun $DryRun
-    
-    # Export results
-    $remediationResults | Export-Csv -Path $OutputPath -NoTypeInformation
-    Write-Host "`nResults exported to: $OutputPath" -ForegroundColor Green
-    
-    # Display final summary
-    Write-Host "`n=== REMEDIATION RESULTS ===" -ForegroundColor Magenta
-    $remediationResults | Format-Table SubscriptionName, DisplayName, Status, NonCompliantCount -AutoSize
-    
-    Write-Host "`nScript completed at: $(Get-Date)" -ForegroundColor Cyan
+    $result = Main
+    Write-Output "Automation runbook completed successfully"
+    return $result
 }
 catch {
-    Write-Error "Script failed: $($_.Exception.Message)"
-    exit 1
+    Write-Error "Automation runbook failed: $($_.Exception.Message)"
+    throw
 }
-Pol
+#endregion
