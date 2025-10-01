@@ -1,0 +1,12 @@
+// VNet Flow Logs Summary
+AzureNetworkAnalytics_CL 
+| where TimeGenerated > ago(1h)
+| where SubType_s == "FlowLog"
+| summarize FlowCount=count() by bin(TimeGenerated, 5m)
+
+// Top Talkers by Traffic Volume
+AzureNetworkAnalytics_CL 
+| where TimeGenerated > ago(1h)
+| where SubType_s == "FlowLog"
+| summarize TotalBytes=sum(OutboundBytes_d + InboundBytes_d) by SrcIP_s, DestIP_s
+| top 10 by TotalBytes
