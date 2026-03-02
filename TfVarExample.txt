@@ -1,0 +1,144 @@
+# -----------------------------------------------------------------------------
+# Example Terraform Variables File
+# Copy this file to terraform.tfvars and customize the values
+# -----------------------------------------------------------------------------
+
+# Core Infrastructure
+location            = "northeurope"
+subscription_id     = "6088f278-2d38-4bdd-9e08-e5417d44af11"
+resource_group_name = "M-CSSPZ-RG-MAN-PRD-002"
+environment         = "PRD"
+
+# Log Analytics Workspace
+log_analytics_workspace_name = "R-CSSPZ-LOGS-MAN-PRD-001"
+
+# Data Collection Rules
+dcr_vminsights_name    = "MSVMI-DefaultWorkspace-6088f278-2d38-4bdd-9e08-e5417d44af11-EUS"
+dcr_windows_name       = "R-CSSPZ-DCR-MAN-PRD-001"
+dcr_linux_name         = "R-CSSPZ-DCR-MAN-PRD-002"
+dcr_nwta_endpoint_name = "NWTA-cca82599-4280-4ce1-8db8-0dc465K83EQK"
+dcr_nwta_rule_name     = "NWTA-cca82599-4280-4ce1-8db8-0dc465ff83be8UQIXD"
+
+# User Assigned Identity
+user_assigned_identity_name = "ADgroupmember"
+
+# Action Groups
+vip_support_action_group_id = "/subscriptions/6088f278-2d38-4bdd-9e08-e5417d44af11/resourcegroups/r-csspz-rg-man-prd-009/providers/microsoft.insights/actiongroups/vipsupport"
+servicenow_action_group_id  = "/subscriptions/b97da650-b444-4530-9f4b-968706a96e1b/resourcegroups/m-csspz-rg-soc-prd-001/providers/microsoft.insights/actiongroups/servicenow azure monitor sync"
+automation_account_id       = "/subscriptions/6088f278-2d38-4bdd-9e08-e5417d44af11/resourceGroups/M-CSSPZ-RG-MAN-PRD-001/providers/Microsoft.Automation/automationAccounts/aut-azure-servicenow-001"
+
+# Security Center Automation
+security_center_automation_name = "ExportToWorkspace"
+
+# Log Analytics Solutions
+log_analytics_solutions = ["ChangeTracking", "SecurityCenterFree", "SQLAdvancedThreatProtection", "SQLVulnerabilityAssessment", "Security"]
+
+# Activity Log Alert Configuration
+vm_health_alert_name              = "Azure Prod VM Health Status Degraded"
+vm_health_alert_description       = "Azure Prod VM Health Status Degraded"
+vm_health_current_statuses        = ["Degraded", "Unavailable"]
+vm_health_previous_statuses       = ["Available"]
+service_health_alert_name         = "Service Health Alerts"
+service_health_events             = ["Incident", "Maintenance", "Informational", "ActionRequired", "Security"]
+service_health_locations          = ["Global"]
+
+# Security Center Automation Configuration
+security_assessment_severities = ["High", "Medium", "Low"]
+security_alert_severities      = ["high", "medium", "low"]
+security_event_sources = [
+  "SubAssessments",
+  "Assessments",
+  "Alerts",
+  "SecureScores",
+  "SecureScoreControls",
+  "RegulatoryComplianceAssessment",
+  "SecureScoresSnapshot",
+  "SecureScoreControlsSnapshot",
+  "RegulatoryComplianceAssessmentSnapshot",
+  "AssessmentsSnapshot",
+  "SubAssessmentsSnapshot"
+]
+
+# Log Analytics Saved Search Configuration
+saved_search_categories = {
+  change_tracking          = "Change Tracking"
+  general_exploration     = "General Exploration"
+  log_management          = "Log Management"
+  security                = "Security"
+  security_critical_issues = "Security Critical Notable Issues"
+  security_info_issues    = "Security Info Notable Issues"
+  security_warning_issues = "Security Warning Notable Issues"
+}
+
+enable_saved_searches = true
+
+# Data Collection Configuration
+performance_counter_sampling_frequency = 60
+
+# Alert Webhook Properties
+alert_webhook_properties = {
+  AssignmentGroup = "HCL-VIP-Support"
+  Service         = "Azure Cloud Platform Application Service"
+  SubType         = "TestExampleAvailableDiskSpaceAlert"
+  Type            = "Capacity"
+}
+
+# Common Tags - Update these values for your organization
+common_tags = {
+  "Account Type"            = "PLACEHOLDER"
+  "App Support"             = "PLACEHOLDER"
+  AppSupport                = "PLACEHOLDER"
+  "BOI Application"         = "PLACEHOLDER"
+  "BOI Application Service" = "PLACEHOLDER"
+  Backup                    = "PLACEHOLDER"
+  "Business Function"       = "PLACEHOLDER"
+  "Business Unit"           = "PLACEHOLDER"
+  BusinessUnit              = "PLACEHOLDER"
+  Compliance                = "PLACEHOLDER"
+  Confidentiality           = "PLACEHOLDER"
+  "Cost Centre"             = "PLACEHOLDER"
+  CostCentre                = "PLACEHOLDER"
+  "Data Sensitivity"        = "PLACEHOLDER"
+  DataSensitivity           = "PLACEHOLDER"
+  Description               = "PLACEHOLDER"
+  Environment               = "PLACEHOLDER"
+  "Infra Support"           = "PLACEHOLDER"
+  InfraSupport              = "PLACEHOLDER"
+  "Log Level"               = "PLACEHOLDER"
+  "Log Zone"                = "PLACEHOLDER"
+  MaintWinPatch             = "PLACEHOLDER"
+  MaintWinPatchScan         = "PLACEHOLDER"
+  Name                      = "PLACEHOLDER"
+  "Operating System"        = "PLACEHOLDER"
+  OperatingSystem           = "PLACEHOLDER"
+  "Operational Status"      = "PLACEHOLDER"
+  Owner                     = "PLACEHOLDER"
+  PII                       = "PLACEHOLDER"
+  "Patch Group"             = "PLACEHOLDER"
+  Project                   = "PLACEHOLDER"
+  "Server Criticality"      = "PLACEHOLDER"
+  ServerCriticality         = "PLACEHOLDER"
+  "Support Groups"          = "PLACEHOLDER"
+}
+
+# Resource Group Specific Tags
+resource_group_tags = {
+  "Account Type"            = "PLACEHOLDER"
+  AppSupport                = "PLACEHOLDER"
+  "BOI Application"         = "PLACEHOLDER"
+  "BOI Application Service" = "PLACEHOLDER"
+  BusinessUnit              = "PLACEHOLDER"
+  Compliance                = "PLACEHOLDER"
+  Confidentiality           = "PLACEHOLDER"
+  CostCentre                = "FD2000"
+  DataSensitivity           = "PLACEHOLDER"
+  Description               = "PLACEHOLDER"
+  Environment               = "PRD"
+  InfraSupport              = "HCL-VIP-Support"
+  Name                      = "PLACEHOLDER"
+  OperatingSystem           = "PLACEHOLDER"
+  Owner                     = "Daniel Dalla"
+  PII                       = "PLACEHOLDER"
+  Project                   = "PLACEHOLDER"
+  ServerCriticality         = "PLACEHOLDER"
+}
