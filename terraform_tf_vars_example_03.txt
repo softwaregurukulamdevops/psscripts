@@ -1,0 +1,430 @@
+# Example Terraform Variables File
+# Copy this to terraform.tfvars and adjust values for your environment
+
+subscription_id                    = "6088f278-2d38-4bdd-9e08-e5417d44af11"
+tenant_id                          = "51150d51-ffd8-4b46-ad9a-12038c211b72"
+resource_group_name                = "M-CSSPZ-RG-MAN-PRD-003"
+resource_group_name_des            = "M-CSSPZ-RG-MAN-PRD-004"
+resource_group_name_vnet           = "M-CSSPZ-RG-MAN-PRD-001"
+resource_group_name_identity       = "R-CSSPZ-RG-MAN-SC-PRD-001"
+resource_group_name_soc            = "m-csspz-rg-soc-prd-001"
+location                           = "northeurope"
+environment                        = "PRD"
+managed_identity_name              = "R-CSSPZ-MI-MAN-PRD-001"
+managed_identity_identity_only_name = "R-CSSPZ-MI-MAN-POL-SC-PRD-001"
+
+network_interface_names = {
+  ovoc_image      = "m-csspz-ovoc-image212_z1"
+  cyberark        = "m-csspz-vm-cyberark-man-prd-001315_z1"
+  snowsync        = "m-csspz-vm-snowsync-man-prd-001425_z1"
+}
+
+vnet_name = "M-CSSPZ-VNET-MAN-PRD-001"
+
+subnet_names = {
+  fgt_subnet      = "M-CSSPZ-SNET-FGT-PRD-001"
+  man_subnet      = "M-CSSPZ-SNET-MAN-PRD-001"
+  cyberark_subnet = "R-CSSPZ-SNET-MAN-PRD-005"
+}
+
+nsg_names = {
+  ovoc_image               = "M-CSSPZ-OVOC-IMAGE-nsg"
+  cyberark_001             = "M-CSSPZ-VM-CYBERARK-MAN-PRD-001-nsg"
+  cyberark_002             = "M-CSSPZ-VM-CYBERARK-MAN-PRD-002-nsg"
+  snowsync                 = "M-CSSPZ-VM-SNOWSYNC-MAN-PRD-001-nsg"
+  cyberark_backup_001      = "MCSSPZVMCYBERARKMANPRD001nsg105"
+  cyberark_backup_002      = "MCSSPZVMCYBERARKMANPRD001nsg430"
+  cyberark_backup_003      = "MCSSPZVMCYBERARKMANPRD001nsg497"
+}
+
+disk_encryption_set_name = "M-DES-MAN-PROD-001"
+public_ip_name           = "M-CSSPZ-VM-SNOWSYNC-MAN-PRD-001-ip"
+public_ip_sku            = "Standard"
+recovery_vault_name      = "R-CSSPZ-RV-MAN-PRD-001"
+recovery_vault_sku       = "Standard"
+
+backup_policy_default_name = "DefaultPolicy"
+backup_policy_enhanced_name = "EnhancedPolicy"
+backup_daily_retention_count = 30
+backup_daily_retention_count_vm = 35
+
+automation_account_name = "R-CSSPZ-AA-MAN-PRD-001"
+automation_account_sku  = "Basic"
+
+vm_cyberark_name             = "M-CSSPZ-VM-CYBERARK-MAN-PRD-001"
+vm_cyberark_size             = "Standard_D4s_v3"
+vm_cyberark_admin_username   = "cyberarkadmin"
+vm_cyberark_admin_password   = "YourComplexPassword123!" # Replace with actual password
+os_type                      = "Windows"
+
+managed_disk_name                   = "M-CSSPZ-OVOC-IMAGE_OsDisk_1_23e74f38e4c04fccaa56f89b7780dd34"
+managed_disk_storage_account_type   = "Premium_LRS"
+
+vm_image_offer      = "WindowsServer"
+vm_image_publisher  = "MicrosoftWindowsServer"
+vm_image_sku        = "2022-datacenter-azure-edition"
+vm_image_version    = "latest"
+
+devops_issuer_url = "https://vstoken.dev.azure.com/51150d51-ffd8-4b46-ad9a-12038c211b72"
+devops_subject = "sc://BOIGroup-CCoE-CSSPZ/CSSPZ-LandingZone/R-CSSPZ-MI-MAN-POOL-SC-PRD-001"
+
+# Common tags for all resources
+common_tags = {
+  "Account Type"            = "PLACEHOLDER"
+  "App Support"             = "PLACEHOLDER"
+  AppSupport                = "PLACEHOLDER"
+  "BOI Application"         = "PLACEHOLDER"
+  "BOI Application Service" = "PLACEHOLDER"
+  Backup                    = "PLACEHOLDER"
+  "Business Function"       = "PLACEHOLDER"
+  "Business Unit"           = "PLACEHOLDER"
+  BusinessUnit              = "PLACEHOLDER"
+  Compliance                = "PLACEHOLDER"
+  Confidentiality           = "PLACEHOLDER"
+  "Cost Centre"             = "PLACEHOLDER"
+  CostCentre                = "FD2000"
+  "Data Sensitivity"        = "PLACEHOLDER"
+  DataSensitivity           = "PLACEHOLDER"
+  Description               = "PLACEHOLDER"
+  Environment               = "Production"
+  "Infra Support"           = "PLACEHOLDER"
+  InfraSupport              = "HCL-VIP-Support"
+  "Log Level"               = "PLACEHOLDER"
+  "Log Zone"                = "PLACEHOLDER"
+  MaintWinPatch             = "PLACEHOLDER"
+  MaintWinPatchScan         = "PLACEHOLDER"
+  Name                      = "PLACEHOLDER"
+  "Operating System"        = "PLACEHOLDER"
+  OperatingSystem           = "PLACEHOLDER"
+  "Operational Status"      = "PLACEHOLDER"
+  Owner                     = "Daniel Dalla"
+  PII                       = "PLACEHOLDER"
+  "Patch Group"             = "PLACEHOLDER"
+  Project                   = "PLACEHOLDER"
+  "Server Criticality"      = "PLACEHOLDER"
+  ServerCriticality         = "PLACEHOLDER"
+  "Support Groups"          = "PLACEHOLDER"
+}
+
+# Maintenance configuration names
+maintenance_config_names = [
+  "Nightly-2am",
+  "Nightly-3am",
+  "PilotGrp1",
+  "PilotGrp2",
+  "PilotGrp3",
+  "PrepGrp1",
+  "PrepGrp2",
+  "PrepGrp3",
+  "ProdGrp1",
+  "ProdGrp2",
+  "ProdGrp3",
+  "TestGrp1",
+  "TestGrp2",
+  "TestGrp3"
+]
+
+maintenance_window_duration = "04:00"
+maintenance_auto_patch_enabled = true
+
+runbook_names = {
+  tag_policy_remediation = "M-TagPolicy-Remediation-Runbook-PRD"
+  vm_start_stop          = "R-VM-START-STOP"
+  aum_attach_vm          = "R-AUM-ATTACH-VM"
+}
+
+runbook_type = "PowerShell"
+
+action_group_id = "/subscriptions/b97da650-b444-4530-9f4b-968706a96e1b/resourcegroups/m-csspz-rg-soc-prd-001/providers/microsoft.insights/actiongroups/servicenow azure monitor sync"
+
+nsg_rules = {
+  https = {
+    priority                   = 1010
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  ssh = {
+    priority                   = 1020
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+
+availability_zone = "1"
+backup_frequency_daily = "Daily"
+backup_frequency_hourly = "Hourly"
+backup_time = "03:30"
+vm_patch_mode = "AutomaticByPlatform"
+secondary_subscription_id = "b97da650-b444-4530-9f4b-968706a96e1b"
+hyperv_generation = "V1"
+secure_boot_enabled = true
+vtpm_enabled = true
+
+# Resource-Type-Specific Tag Overrides (optional)
+# These variables allow you to override or add specific tags for each resource type.
+# The common_tags are automatically merged with these resource-specific tags.
+# Only define these if you need to add or override tags for specific resource types.
+
+# Example: Override tags for VM extensions
+# tags_vm_extension = {
+#   "Custom Tag" = "VM Extension Value"
+# }
+
+# Example: Override tags for managed identities
+# tags_managed_identity = {
+#   "Custom Tag" = "Identity Value"
+# }
+
+# Example: Override tags for network interfaces
+# tags_network_interface = {
+#   "Custom Tag" = "NIC Value"
+# }
+
+# Example: Override tags for network security groups
+# tags_network_security_group = {
+#   "Custom Tag" = "NSG Value"
+# }
+
+# Example: Override tags for public IPs
+# tags_public_ip = {
+#   "Custom Tag" = "Public IP Value"
+# }
+
+# Example: Override tags for recovery vaults
+# tags_recovery_vault = {
+#   "Custom Tag" = "Recovery Vault Value"
+# }
+
+# Example: Override tags for backup policies
+# tags_backup_policy = {
+#   "Custom Tag" = "Backup Policy Value"
+# }
+
+# Example: Override tags for automation accounts
+# tags_automation_account = {
+#   "Custom Tag" = "Automation Account Value"
+# }
+
+# Example: Override tags for automation schedules
+# tags_automation_schedule = {
+#   "Custom Tag" = "Automation Schedule Value"
+# }
+
+# Example: Override tags for automation runbooks
+# tags_automation_runbook = {
+#   "Custom Tag" = "Automation Runbook Value"
+# }
+
+# Example: Override tags for automation modules
+# tags_automation_module = {
+#   "Custom Tag" = "Automation Module Value"
+# }
+
+# Example: Override tags for maintenance configurations
+# tags_maintenance_config = {
+#   "Custom Tag" = "Maintenance Config Value"
+# }
+
+# Example: Override tags for alerts
+# tags_alert = {
+#   "Custom Tag" = "Alert Value"
+# }
+
+# Example: Override tags for managed disks
+# tags_managed_disk = {
+#   "Custom Tag" = "Managed Disk Value"
+# }
+
+# Example: Override tags for virtual machines
+# tags_virtual_machine = {
+#   "Custom Tag" = "Virtual Machine Value"
+#   "Server Criticality" = "High"  # Override common_tags value
+# }
+# ========================================
+# Backup Policy Names Configuration
+# ========================================
+# backup_policy_names = {
+#   hourly_log_backup  = "HourlyLogBackup"
+#   sql_backup_default = "SQL-Backup-Default"
+#   vm_backup_default  = "VM-Backup-Default"
+#   vm_backup_enhanced = "VM-Backup-EnhancedPolicy"
+# }
+
+# ========================================
+# Automation Runbook Names
+# ========================================
+# automation_runbook_names = {
+#   vm_start_stop          = "R-VM-START-STOP"
+#   tag_policy_remediation = "M-TagPolicy-Remediation-Runbook-PRD"
+#   aum_attach_vm          = "R-AUM-ATTACH-VM"
+# }
+
+# ========================================
+# Automation Schedule Names
+# ========================================
+# automation_schedule_names = {
+#   autoshutdown_patch_start       = "CSSPZ-AutoShutdown-patch-start"
+#   autoshutdown_patch_stop        = "CSSPZ-AutoShutdown-patch-stop"
+#   autoshutdown_stop              = "CSSPZ-AutoShutdown-stop"
+#   ie_office_hours_start          = "CSSPZ-ie-office-hours-start"
+#   ie_office_hours_stop           = "CSSPZ-ie-office-hours-stop"
+#   ie_office_hours_patch_start    = "CSSPZ-ie-office-hours-patch-start"
+#   ie_office_hours_patch_stop     = "CSSPZ-ie-office-hours-patch-stop"
+#   india_office_hours_start       = "CSSPZ-india-office-hours-start"
+#   india_office_hours_stop        = "CSSPZ-india-office-hours-stop"
+#   india_office_hours_patch_start = "CSSPZ-india-office-hours-patch-start"
+#   india_office_hours_patch_stop  = "CSSPZ-india-office-hours-patch-stop"
+#   eu_office_hours_start          = "CSSPZ-eu-office-hours-start"
+#   eu_office_hours_stop           = "CSSPZ-eu-office-hours-stop"
+#   eu_office_hours_patch_start    = "CSSPZ-eu-office-hours-patch-start"
+#   eu_office_hours_patch_stop     = "CSSPZ-eu-office-hours-patch-stop"
+#   workload_mw_patch_nightly_12am = "R-CSSPZ-Workload-MW-PatchNightly-12am"
+#   workload_mw_patch_nightly_12pm = "R-CSSPZ-Workload-MW-PatchNightly-12pm"
+#   tag_policy_remediation_schedule = "m-Tagpolicy-remediation-runbook-prd-schedule"
+# }
+
+# ========================================
+# Automation Schedule Timezones
+# ========================================
+# schedule_timezone_dublin = "Europe/Dublin"
+# schedule_timezone_gmt    = "GMT Standard Time"
+
+# ========================================
+# Maintenance Configuration Names
+# ========================================
+# maintenance_configuration_names = {
+#   nightly_2am = "Nightly-2am"
+#   nightly_3am = "Nightly-3am"
+#   pilot_grp1  = "PilotGrp1"
+#   pilot_grp2  = "PilotGrp2"
+#   pilot_grp3  = "PilotGrp3"
+#   test_grp1   = "TestGrp1"
+#   test_grp2   = "TestGrp2"
+#   test_grp3   = "TestGrp3"
+#   prep_grp1   = "PrepGrp1"
+#   prep_grp2   = "PrepGrp2"
+#   prep_grp3   = "PrepGrp3"
+#   prod_grp1   = "ProdGrp1"
+#   prod_grp2   = "ProdGrp2"
+#   prod_grp3   = "ProdGrp3"
+# }
+
+# maintenance_configuration_scope = "InGuestPatch"
+
+# ========================================
+# Maintenance Window Start Times
+# ========================================
+# maintenance_window_start_times = {
+#   nightly_2am = "2025-07-03 02:00"
+#   nightly_3am = "2025-07-03 03:00"
+#   pilot_grp1  = "2025-08-05 02:00"
+#   pilot_grp2  = "2025-08-05 03:00"
+#   pilot_grp3  = "2025-08-05 04:00"
+#   prep_grp1   = "2025-07-15 02:00"
+#   prep_grp2   = "2025-07-16 02:00"
+#   prep_grp3   = "2025-07-17 02:00"
+#   prod_grp1   = "2025-07-22 02:00"
+#   prod_grp2   = "2025-07-23 02:00"
+#   prod_grp3   = "2025-07-24 02:00"
+#   test_grp1   = "2025-07-08 02:00"
+#   test_grp2   = "2025-07-08 03:00"
+#   test_grp3   = "2025-07-08 04:00"
+# }
+
+# maintenance_window_duration_hours = 1
+# maintenance_window_duration = "04:00"
+
+# ========================================
+# Federated Identity Configuration
+# ========================================
+# federated_identity_name     = "R-CSSPZ-MI-MAN-POOL-SC-PRD-001"
+# federated_identity_audience = "api://AzureADTokenExchange"
+
+# ========================================
+# Backup Times Configuration
+# ========================================
+# backup_times = {
+#   hourly_log_backup  = "08:00"
+#   sql_backup_default = "03:30"
+#   vm_backup_default  = "23:00"
+#   vm_backup_enhanced = "23:00"
+# }
+
+# ========================================
+# IP Configuration
+# ========================================
+# ip_configuration_name = "ipconfig1"
+
+# ========================================
+# VM Extensions Configuration
+# ========================================
+# vm_extension_mde_name        = "MDE.Windows"
+# vm_extension_mde_publisher   = "Microsoft.Azure.AzureDefenderForServers"
+# vm_extension_azmonitor_name  = "AzureMonitorWindowsAgent"
+
+# ========================================
+# Activity Log Alert Configuration
+# ========================================
+# activity_log_alert_name          = "Test Azure and ServiceNow sync"
+# activity_log_alert_webhook_group = "HCL-VIP-Support"
+# activity_log_alert_category      = "Administrative"
+
+# ========================================
+# Automation Management Configuration
+# ========================================
+# automation_service_principal_id         = "a139e097-5a1c-4b9f-a6fd-347f260b3bff"
+# automation_management_group             = "BOIProd"
+# automation_policy_asg                   = "dfc_azure_arc_policy_asg"
+# automation_management_group_lowercase   = "boiprod"
+
+# ========================================
+# NSG Rules Configuration
+# ========================================
+# nsg_rules = {
+#   https = {
+#     priority                   = 1010
+#     direction                  = "Inbound"
+#     access                     = "Allow"
+#     protocol                   = "Tcp"
+#     source_port_range          = "*"
+#     destination_port_range     = "443"
+#     source_address_prefix      = "*"
+#     destination_address_prefix = "*"
+#   }
+#   ssh = {
+#     priority                   = 1020
+#     direction                  = "Inbound"
+#     access                     = "Allow"
+#     protocol                   = "Tcp"
+#     source_port_range          = "*"
+#     destination_port_range     = "22"
+#     source_address_prefix      = "*"
+#     destination_address_prefix = "*"
+#   }
+# }
+
+# ========================================
+# Action Group Configuration
+# ========================================
+# action_group_id = "/subscriptions/b97da650-b444-4530-9f4b-968706a96e1b/resourcegroups/m-csspz-rg-soc-prd-001/providers/microsoft.insights/actiongroups/servicenow azure monitor sync"
+
+# ========================================
+# Runbook Configuration (Alternative names)
+# ========================================
+# runbook_names = {
+#   tag_policy_remediation = "M-TagPolicy-Remediation-Runbook-PRD"
+#   vm_start_stop          = "R-VM-START-STOP"
+#   aum_attach_vm          = "R-AUM-ATTACH-VM"
+# }
+
+# runbook_type = "PowerShell"
