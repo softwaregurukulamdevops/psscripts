@@ -1,0 +1,27 @@
+resource "azurerm_resource_group" "res-0" {
+  location = "northeurope"
+  name     = "R-CSSPZ-RG-MAN-PRD-008"
+  tags = {
+    "Account Type"            = "PLACEHOLDER"
+    AccountType               = "PLACEHOLDER"
+    AppSupport                = "PLACEHOLDER"
+    "BOI Application"         = "PLACEHOLDER"
+    "BOI Application Service" = "PLACEHOLDER"
+    BOIApplication            = "PLACEHOLDER"
+    BOIApplicationService     = "PLACEHOLDER"
+    BusinessUnit              = "PLACEHOLDER"
+    Compliance                = "PLACEHOLDER"
+    Confidentiality           = "PLACEHOLDER"
+    CostCentre                = "FD2000"
+    DataSensitivity           = "PLACEHOLDER"
+    Description               = "PLACEHOLDER"
+    Environment               = "PRD"
+    InfraSupport              = "HCL-VIP-Support"
+    Name                      = "PLACEHOLDER"
+    OperatingSystem           = "PLACEHOLDER"
+    Owner                     = "Daniel Dalla"
+    PII                       = "PLACEHOLDER"
+    Project                   = "PLACEHOLDER"
+    ServerCriticality         = "PLACEHOLDER"
+  }
+}
